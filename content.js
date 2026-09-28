@@ -1,5 +1,5 @@
-﻿// KL University ERP – Subject Code Replacer v1.6
-// Robust error handling, safe DOM targets, guarded observer lifecycle.
+﻿// KL University ERP – Subject Code Replacer v2.0
+// Formatted visual cards with color-coded session badges & prominent room indicators.
 
 (async () => {
 
@@ -25,6 +25,7 @@
 
   // ── 2. Shared mutable state ────────────────────────────────────────────────
   const state = { enabled: true, mode: 'name-only' };
+  let isProcessing = false;
 
   await new Promise(resolve => {
     try {
@@ -40,7 +41,97 @@
     }
   });
 
-  // ── 3. matchCode ───────────────────────────────────────────────────────────
+  // ── 3. Inject CSS Styles ───────────────────────────────────────────────────
+  function injectStyles() {
+    if (document.getElementById('kl-replacer-style')) return;
+    const style = document.createElement('style');
+    style.id = 'kl-replacer-style';
+    style.textContent = `
+      .kl-cell-card {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 5px !important;
+        padding: 5px 3px !important;
+        font-family: system-ui, -apple-system, sans-serif !important;
+        font-size: 11.5px !important;
+        line-height: 1.35 !important;
+        text-align: center !important;
+        box-sizing: border-box !important;
+      }
+      .kl-subject-name {
+        font-weight: 700 !important;
+        color: #0f172a !important;
+        font-size: 11.5px !important;
+        word-break: normal !important;
+        overflow-wrap: break-word !important;
+        line-height: 1.3 !important;
+      }
+      .kl-subject-code {
+        font-size: 10px !important;
+        color: #475569 !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.03em !important;
+        margin-top: -2px !important;
+      }
+      .kl-badges-container {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+        justify-content: center !important;
+        align-items: center !important;
+        margin-top: 2px !important;
+      }
+      .kl-badge {
+        display: inline-flex !important;
+        align-items: center !important;
+        padding: 2.5px 7px !important;
+        border-radius: 5px !important;
+        font-size: 10px !important;
+        font-weight: 700 !important;
+        line-height: 1.2 !important;
+        white-space: nowrap !important;
+        letter-spacing: 0.02em !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+      }
+      /* Color-coded session badges */
+      .kl-badge-lecture {
+        background: #e0e7ff !important;
+        color: #3730a3 !important;
+        border: 1px solid #c7d2fe !important;
+      }
+      .kl-badge-tutorial {
+        background: #fef3c7 !important;
+        color: #92400e !important;
+        border: 1px solid #fde68a !important;
+      }
+      .kl-badge-practical {
+        background: #dcfce7 !important;
+        color: #166534 !important;
+        border: 1px solid #bbf7d0 !important;
+      }
+      .kl-badge-skilling {
+        background: #f3e8ff !important;
+        color: #6b21a8 !important;
+        border: 1px solid #e9d5ff !important;
+      }
+      /* High-contrast Room badge */
+      .kl-badge-room {
+        background: #fee2e2 !important;
+        color: #991b1b !important;
+        border: 1px solid #fca5a5 !important;
+        font-weight: 800 !important;
+      }
+      /* Section badge */
+      .kl-badge-section {
+        background: #f1f5f9 !important;
+        color: #334155 !important;
+        border: 1px solid #cbd5e1 !important;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  // ── 4. Match & Parse Cell ──────────────────────────────────────────────────
   function matchCode(cellText) {
     if (!cellText) return null;
     const upper = cellText.toUpperCase();
@@ -55,39 +146,62 @@
     return null;
   }
 
-  // ── 4. LTPS expansion ──────────────────────────────────────────────────────
   const LTPS = { L: 'Lecture', T: 'Tutorial', P: 'Practical', S: 'Skilling' };
 
-  function expandSuffix(suffix) {
-    if (!suffix) return '';
-    return suffix.replace(/^-([LTPS])(?=[\s\-]|$)/i, (_, letter) => {
-      const full = LTPS[letter.toUpperCase()];
-      return full ? ` - ${full}` : `-${letter}`;
-    });
+  function parseCellData(originalCode, name, suffix) {
+    // Session Type (Lecture / Tutorial / Practical / Skilling)
+    const typeMatch = suffix.match(/-([LTPS])(?=[\s\-]|$)/i);
+    const typeLetter = typeMatch ? typeMatch[1].toUpperCase() : null;
+    const typeName = typeLetter ? (LTPS[typeLetter] || null) : null;
+
+    // Section (e.g. S-1)
+    const secMatch = suffix.match(/S-(\d+)/i);
+    const section = secMatch ? `S-${secMatch[1]}` : null;
+
+    // Room Number (e.g. M121, C307, S914, C221B2)
+    const roomMatch = suffix.match(/RoomNo[-\s:]*([A-Za-z0-9]+)/i);
+    const room = roomMatch ? roomMatch[1] : null;
+
+    return { originalCode, name, typeName, section, room };
   }
 
-  // ── 5. Build display text ──────────────────────────────────────────────────
-  function buildText(originalCode, name, suffix, displayMode) {
-    const safeCode = originalCode || '';
-    const safeName = name || '';
-    const expanded = expandSuffix(suffix || '');
-    return displayMode === 'code+name'
-      ? `${safeName} (${safeCode})${expanded}`
-      : `${safeName}${expanded}`;
+  function renderHTML(data, displayMode) {
+    const { originalCode, name, typeName, section, room } = data;
+    let badgesHtml = '';
+
+    if (typeName) {
+      const typeClass = `kl-badge-${typeName.toLowerCase()}`;
+      badgesHtml += `<span class="kl-badge ${typeClass}">${typeName}</span>`;
+    }
+
+    if (room) {
+      badgesHtml += `<span class="kl-badge kl-badge-room"> Room ${room}</span>`;
+    }
+
+    if (section) {
+      badgesHtml += `<span class="kl-badge kl-badge-section">${section}</span>`;
+    }
+
+    const codeHtml = (displayMode === 'code+name' && originalCode)
+      ? `<div class="kl-subject-code">${originalCode}</div>`
+      : '';
+
+    return `
+      <div class="kl-cell-card">
+        <div class="kl-subject-name">${name}</div>
+        ${codeHtml}
+        ${badgesHtml ? `<div class="kl-badges-container">${badgesHtml}</div>` : ''}
+      </div>
+    `.trim();
   }
 
-  // ── 6. Cell tracking Map ───────────────────────────────────────────────────
+  // ── 5. Cell tracking Map ───────────────────────────────────────────────────
+  // Map<td, { originalHTML, originalText, parsedData }>
   const processedCells = new Map();
 
   function processCell(td) {
     if (!td) return false;
-    if (processedCells.has(td)) {
-      const d = processedCells.get(td);
-      if (d) {
-        td.textContent = buildText(d.originalCode, d.name, d.suffix, state.mode);
-        return true;
-      }
-    }
+    if (processedCells.has(td)) return false;
 
     const text = (td.textContent || '').trim();
     if (!text || text === '-') return false;
@@ -97,42 +211,72 @@
 
     const { name, originalCode } = lookup[codeKey];
     const suffix = text.slice(originalCode ? originalCode.length : codeKey.length) || '';
+    const parsedData = parseCellData(originalCode, name, suffix);
 
-    processedCells.set(td, { original: text, originalCode, name, suffix });
-    td.textContent = buildText(originalCode, name, suffix, state.mode);
+    processedCells.set(td, {
+      originalHTML: td.innerHTML,
+      originalText: text,
+      parsedData
+    });
+
+    td.innerHTML = renderHTML(parsedData, state.mode);
     return true;
   }
 
   function processTables() {
-    if (!state.enabled) return 0;
+    if (!state.enabled || isProcessing) return 0;
+    if (!document.querySelector('table')) return 0;
+
+    injectStyles();
+    isProcessing = true;
     let n = 0;
-    const tds = document.querySelectorAll('table td');
-    for (const td of tds) {
-      if (processCell(td)) n++;
+    try {
+      const tds = document.querySelectorAll('table td');
+      for (const td of tds) {
+        if (processCell(td)) n++;
+      }
+    } finally {
+      isProcessing = false;
     }
     return n;
   }
 
   function restoreAll() {
-    for (const [td, d] of processedCells) {
-      if (td && d && d.original !== undefined) {
-        td.textContent = d.original;
+    isProcessing = true;
+    try {
+      for (const [td, d] of processedCells) {
+        if (td && d) {
+          td.innerHTML = d.originalHTML || d.originalText;
+        }
       }
+      processedCells.clear();
+    } finally {
+      isProcessing = false;
     }
-    processedCells.clear();
   }
 
   function reapplyAll() {
-    for (const [td, d] of processedCells) {
-      if (td && d) {
-        td.textContent = buildText(d.originalCode, d.name, d.suffix, state.mode);
+    isProcessing = true;
+    try {
+      injectStyles();
+      for (const [td, d] of processedCells) {
+        if (td && d && d.parsedData) {
+          td.innerHTML = renderHTML(d.parsedData, state.mode);
+        }
       }
+    } finally {
+      isProcessing = false;
     }
   }
 
-  // ── 7. MutationObserver & Safe Lifecycle ───────────────────────────────────
+  // ── 6. Debounced MutationObserver (Prevents CPU lockups) ───────────────────
+  let debounceTimer = null;
   const observer = new MutationObserver(() => {
-    if (state.enabled) processTables();
+    if (!state.enabled || isProcessing) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      processTables();
+    }, 200);
   });
 
   function startObserver() {
@@ -148,6 +292,10 @@
   }
 
   function stopObserver() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
     if (observer) {
       try {
         observer.disconnect();
@@ -155,7 +303,7 @@
     }
   }
 
-  // ── 8. Storage-change listener ─────────────────────────────────────────────
+  // ── 7. Storage-change listener ─────────────────────────────────────────────
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName && areaName !== 'local') return;
 
@@ -176,7 +324,7 @@
     }
   });
 
-  // ── 9. Bootstrap ───────────────────────────────────────────────────────────
+  // ── 8. Bootstrap ───────────────────────────────────────────────────────────
   if (!state.enabled) return;
 
   let attempts = 0;
@@ -184,14 +332,14 @@
     if (!state.enabled) return;
     const n = processTables();
     if (n > 0) {
-      console.log(`[KL Replacer] ✓ ${n} cell(s) replaced (attempt ${attempts + 1})`);
+      console.log(`[KL Replacer] ✓ ${n} cell(s) formatted (attempt ${attempts + 1})`);
     }
-    if (++attempts < 30) {
+    attempts++;
+    if (attempts < 20) {
       setTimeout(tryReplace, 500);
     }
   }
 
-  // Run on ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       tryReplace();

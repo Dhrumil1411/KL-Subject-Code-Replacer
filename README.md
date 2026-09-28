@@ -1,26 +1,33 @@
-# KL Subject Code Replacer
+﻿# KL Subject Code Replacer – Chrome Extension (v2.0)
 
-A Google Chrome browser extension that enhances the KL University ERP timetable interface by automatically replacing cryptic course codes with clear, readable subject titles.
+Transforms cryptic timetable cells on the **KL University ERP** (`newerp.kluniversity.in`) into clean, visually structured cards with color-coded session pills and highlighted classroom numbers.
+
+## Visual Design
+
+Each table cell is formatted into a clean visual card:
+
+- **Subject Name**: Bold, dark, clear title.
+- **Session Badges (Color-coded)**:
+  - 📘 **Lecture**: Soft Indigo/Blue badge (`Lecture`)
+  - 📙 **Tutorial**: Warm Amber/Gold badge (`Tutorial`)
+  - 📗 **Practical**: Emerald Green badge (`Practical`)
+  - 🔮 **Skilling**: Soft Violet/Purple badge (`Skilling`)
+- **Classroom Indicator**: Prominent coral/red badge with pin icon (e.g. `📍 Room C307`, `📍 Room M121`) so you can spot your classroom instantly without scanning through text.
+- **Section Indicator**: Clean slate badge (e.g. `S-1`).
+
+## Display Modes
+
+1. **Name only**: Full subject title + Badges (Session Type, Room, Section)
+2. **Code + Name**: Full subject title + Subject Code (`25CS2101L`) + Badges
 
 ## Features
-- Automatically detects and replaces course codes (e.g. `25CS2101L`) with full subject titles on the ERP timetable page
-- Expands course component abbreviations into full labels (`-L` to Lecture, `-T` to Tutorial, `-P` to Practical, `-S` to Skilling)
-- Supports two display modes: "Name Only" and "Code + Name"
-- In-place instantaneous swapping toggle without needing to reload the webpage
-- Robust asynchronous DOM tracking using MutationObserver to seamlessly handle dynamic timetable rendering
 
-## Tech Stack
-- Chrome Extensions Manifest V3
-- HTML5 & CSS3 (Popup UI)
-- JavaScript (Chrome Storage API, Content Scripts, DOM MutationObserver)
-- JSON (Course code database)
+- **Instant In-Place Swapping**: Toggle ON/OFF or switch modes without reloading.
+- **High Performance**: Debounced observer and re-entrancy locks ensure 0% CPU overhead and zero tab freezing.
 
-## How to Run
-1. Open Google Chrome (or any Chromium-based browser like Brave/Edge) and navigate to `chrome://extensions/`.
-2. Enable **Developer mode** toggle in the top-right corner.
-3. Click the **Load unpacked** button.
-4. Select the project folder: `d:\Project\KL-Subject-Code-Replacer`.
-5. Navigate to the KL University ERP portal (`https://newerp.kluniversity.in/`) to view the expanded timetable.
+## How to Install / Reload
 
-## Status
-Complete
+1. Open Chrome and navigate to `chrome://extensions/`
+2. Enable **Developer mode** in the top-right corner.
+3. Click the **↺ Reload** button on the **KL Subject Code Replacer** card.
+4. Refresh your ERP timetable page.

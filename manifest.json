@@ -1,8 +1,8 @@
 ﻿{
   "manifest_version": 3,
   "name": "KL Subject Code Replacer",
-  "version": "1.6.0",
-  "description": "Replaces subject codes with full subject names on the KL University ERP timetable page.",
+  "version": "2.0.0",
+  "description": "Replaces subject codes with full subject names, color-coded session badges, and prominent classroom indicators on KL University ERP.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://newerp.kluniversity.in/*"

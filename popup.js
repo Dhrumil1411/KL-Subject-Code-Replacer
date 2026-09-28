@@ -1,4 +1,4 @@
-﻿// popup.js  v1.4
+﻿// popup.js  v2.0
 
 const toggle       = document.getElementById('toggle');
 const statusPill   = document.getElementById('status');
@@ -8,8 +8,27 @@ const modeButtons  = document.querySelectorAll('.mode-btn');
 const previewAfter = document.getElementById('preview-after');
 
 const PREVIEWS = {
-  'name-only':  'Front End Development Frameworks - Practical - S-1 -RoomNo-C110',
-  'code+name':  'Front End Development Frameworks (25CS2101L) - Practical - S-1 -RoomNo-C110'
+  'name-only': `
+    <div class="pv-card">
+      <div class="pv-title">Front End Development Frameworks for Web Applications</div>
+      <div class="pv-badges">
+        <span class="pv-badge pv-badge-practical">Practical</span>
+        <span class="pv-badge pv-badge-room">📍 Room C307</span>
+        <span class="pv-badge pv-badge-sec">S-1</span>
+      </div>
+    </div>
+  `,
+  'code+name': `
+    <div class="pv-card">
+      <div class="pv-title">Front End Development Frameworks for Web Applications</div>
+      <div class="pv-code">25CS2101L</div>
+      <div class="pv-badges">
+        <span class="pv-badge pv-badge-practical">Practical</span>
+        <span class="pv-badge pv-badge-room">📍 Room C307</span>
+        <span class="pv-badge pv-badge-sec">S-1</span>
+      </div>
+    </div>
+  `
 };
 
 function applyUI(enabled, mode) {
@@ -19,7 +38,7 @@ function applyUI(enabled, mode) {
   // Status pill
   if (enabled) {
     statusPill.className = 'status-pill on';
-    statusText.textContent = 'Active — codes are replaced';
+    statusText.textContent = 'Active — timetable formatted';
   } else {
     statusPill.className = 'status-pill off';
     statusText.textContent = 'OFF — original codes shown';
@@ -35,7 +54,7 @@ function applyUI(enabled, mode) {
   );
 
   // Update preview
-  previewAfter.textContent = PREVIEWS[mode] ?? PREVIEWS['name-only'];
+  previewAfter.innerHTML = PREVIEWS[mode] || PREVIEWS['name-only'];
 }
 
 // ── Load saved state on popup open ────────────────────────────────────────
