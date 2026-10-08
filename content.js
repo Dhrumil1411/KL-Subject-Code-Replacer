@@ -868,7 +868,7 @@
         padding: 4px 0 !important;
       }
 
-      /* --- Timetable Full-Height Expansion (No inner vertical scrolling) --- */
+      /* --- Timetable Full-Height Expansion & Fixed Equal Column Widths --- */
       .table-responsive,
       .grid-view,
       .box-body,
@@ -885,7 +885,7 @@
       table {
         width: 100% !important;
         min-height: 520px !important;
-        table-layout: auto !important;
+        table-layout: fixed !important;
         border-collapse: collapse !important;
       }
       table tr {
@@ -893,9 +893,57 @@
         min-height: 68px !important;
       }
       table td, table th {
-        padding: 7px 5px !important;
+        padding: 6px 4px !important;
         vertical-align: middle !important;
         height: auto !important;
+        text-align: center !important;
+        box-sizing: border-box !important;
+        overflow-wrap: break-word !important;
+        word-break: break-word !important;
+      }
+      /* Day label column (first column) compact width */
+      table th:first-child,
+      table td:first-child {
+        width: 65px !important;
+        min-width: 65px !important;
+        max-width: 65px !important;
+        font-weight: 800 !important;
+      }
+      /* Slot columns distributed equally */
+      table th:not(:first-child),
+      table td:not(:first-child) {
+        width: auto !important;
+      }
+
+      /* --- Empty Slot Placeholder Styles --- */
+      .kl-empty-slot {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-height: 48px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+      }
+      .kl-empty-pill {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 3px 9px !important;
+        background: rgba(241, 245, 249, 0.75) !important;
+        color: #94a3b8 !important;
+        border: 1px dashed #cbd5e1 !important;
+        border-radius: 6px !important;
+        font-size: 10px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.05em !important;
+        text-transform: uppercase !important;
+        user-select: none !important;
+        transition: all 0.2s ease !important;
+      }
+      .kl-empty-pill:hover {
+        background: rgba(226, 232, 240, 0.95) !important;
+        color: #64748b !important;
+        border-color: #94a3b8 !important;
       }
     `;
     style.setAttribute('data-author-sig', _0xKL_AUTH_SIG);
@@ -1071,19 +1119,30 @@
     if (!td) return false;
     if (processedCells.has(td)) return false;
 
-    const text = (td.textContent || '').trim();
-    if (!text || text === '-') return false;
+    const rawText = (td.textContent || '').trim();
+    const cleanText = rawText.replace(/[\s\-\u00a0]+/g, '').trim();
 
-    const codeKey = matchCode(text);
+    // Format empty slots ('-', '--', 'N/A', or blank) with modern 'Free' pill
+    if (!cleanText || cleanText === 'N/A' || rawText === '-' || rawText === '--' || rawText === '—') {
+      processedCells.set(td, {
+        originalHTML: td.innerHTML,
+        originalText: rawText,
+        isEmptySlot: true
+      });
+      td.innerHTML = '<div class="kl-empty-slot"><span class="kl-empty-pill">Free</span></div>';
+      return true;
+    }
+
+    const codeKey = matchCode(rawText);
     if (!codeKey || !lookup[codeKey]) return false;
 
     const { name, originalCode } = lookup[codeKey];
-    const suffix = text.slice(originalCode ? originalCode.length : codeKey.length) || '';
+    const suffix = rawText.slice(originalCode ? originalCode.length : codeKey.length) || '';
     const parsedData = parseCellData(originalCode, name, suffix);
 
     processedCells.set(td, {
       originalHTML: td.innerHTML,
-      originalText: text,
+      originalText: rawText,
       parsedData
     });
 
@@ -1105,11 +1164,10 @@
 
   function areCellsSameLecture(cellInfoA, cellInfoB) {
     if (!cellInfoA || !cellInfoB) return false;
+    if (cellInfoA.isEmptySlot || cellInfoB.isEmptySlot) return false;
     const pA = cellInfoA.parsedData;
     const pB = cellInfoB.parsedData;
-    if (!pA || !pB) {
-      return Boolean(cellInfoA.originalText && cellInfoB.originalText && cellInfoA.originalText === cellInfoB.originalText);
-    }
+    if (!pA || !pB) return false;
 
     const codeMatch = pA.originalCode && pB.originalCode && (pA.originalCode === pB.originalCode);
     const nameMatch = pA.name && pB.name && (pA.name.trim().toLowerCase() === pB.name.trim().toLowerCase());
@@ -1238,7 +1296,10 @@
           if (colIdx > 0) { // Column 0 is the Day label (Monday, Tuesday, etc.)
             const cellInfo = processedCells.get(cell);
             const text = (cell.textContent || '').replace(/[\s\-\u00a0]+/g, '').trim();
-            const hasClass = (cellInfo && cellInfo.parsedData) || (text.length > 0 && text !== 'N/A' && text !== '-');
+            const isFreeText = /^(free|—|-|--|n\/a)?$/i.test(text);
+
+            const hasClass = Boolean((cellInfo && cellInfo.parsedData && !cellInfo.isEmptySlot) ||
+                                     (!cellInfo && !isFreeText && text.length > 0));
 
             if (hasClass) {
               const lastCoveredCol = colIdx + span - 1;
@@ -1343,17 +1404,21 @@
       injectStyles();
       expandTimetableContainers();
       for (const [td, d] of processedCells) {
-        if (td && d && d.parsedData) {
-          td.innerHTML = renderHTML(d.parsedData, state.mode);
-          const attBadges = td.querySelectorAll('.kl-attendance-badge');
-          attBadges.forEach(badge => {
-            badge.addEventListener('mouseenter', () => showBunkPopover(badge));
-            badge.addEventListener('mouseleave', hideBunkPopover);
-            badge.addEventListener('click', (e) => {
-              e.stopPropagation();
-              showBunkPopover(badge);
+        if (td && d) {
+          if (d.isEmptySlot) {
+            td.innerHTML = '<div class="kl-empty-slot"><span class="kl-empty-pill">Free</span></div>';
+          } else if (d.parsedData) {
+            td.innerHTML = renderHTML(d.parsedData, state.mode);
+            const attBadges = td.querySelectorAll('.kl-attendance-badge');
+            attBadges.forEach(badge => {
+              badge.addEventListener('mouseenter', () => showBunkPopover(badge));
+              badge.addEventListener('mouseleave', hideBunkPopover);
+              badge.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showBunkPopover(badge);
+              });
             });
-          });
+          }
         }
       }
       trimTrailingEmptyColumns();
