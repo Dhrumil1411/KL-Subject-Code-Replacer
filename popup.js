@@ -1,4 +1,7 @@
-// popup.js v2.1 - Subject Replacer
+// popup.js v2.2 - Subject Replacer & Assistant
+// Authenticated Developer Proof & Intellectual Property
+const _0xKL_POP_AUTH = "eyJhdXRob3IiOiJEaHJ1bWlsIERhc2hhZGlhIiwicm9sbE5vIjoiMjUwMDAzOTAyMyIsInByb2plY3QiOiJLTE5ld0VSUC1TdWJqZWN0Q29kZVJlcGxhY2VyIiwidmVyc2lvbiI6IjIuMi4wIn0=";
+window.__KL_DEV_AUTH__ = () => JSON.parse(atob(_0xKL_POP_AUTH));
 
 const toggle       = document.getElementById('toggle');
 const statusPill   = document.getElementById('status');

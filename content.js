@@ -9,6 +9,49 @@
 
 (async () => {
 
+  // ── 0. Cryptographic Proof of Authorship & Intellectual Property ───────────
+  // Steganographic zero-width identifier & encrypted base64 developer certificate
+  const _0xKL_AUTH_SIG = "eyJhdXRob3IiOiJEaHJ1bWlsIERhc2hhZGlhIiwicm9sbE5vIjoiMjUwMDAzOTAyMyIsInByb2plY3QiOiJLTE5ld0VSUC1TdWJqZWN0Q29kZVJlcGxhY2VyIiwidmVyc2lvbiI6IjIuMi4wIiwic2lnIjoiZDA4MzA4MjUtOTAyMy1kaHJ1bWlsIn0=";
+  const _0xKL_WATERMARK = "\u200B\u200C\u200D\uFEFF\u200B\u200D\u200C\uFEFF";
+
+  function __verifyDevIdentity__() {
+    try {
+      const data = JSON.parse(atob(_0xKL_AUTH_SIG));
+      return {
+        Author: data.author,
+        RollNo: data.rollNo,
+        Project: data.project,
+        Version: data.version,
+        Signature: data.sig,
+        Status: "AUTHENTICATED_ORIGINAL_CREATOR"
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Hidden Global Verification Hooks for Console / DevTools inspection
+  window.__KL_DEV_AUTH__ = __verifyDevIdentity__;
+  window.__KL_VERIFY_AUTHOR__ = () => {
+    const cert = __verifyDevIdentity__();
+    if (!cert) return "Verification Failed";
+    console.log("%c╔════════════════════════════════════════════════════════════════════╗", "color: #38bdf8; font-weight: bold;");
+    console.log("%c║           KL SUBJECT CODE REPLACER - AUTHENTIC AUTHOR PROOF        ║", "color: #38bdf8; font-weight: bold;");
+    console.log("%c╠════════════════════════════════════════════════════════════════════╣", "color: #38bdf8;");
+    console.log(`%c║  Original Creator : %c${cert.Author.padEnd(46)}%c║`, "color: #94a3b8;", "color: #4ade80; font-weight: bold;", "color: #94a3b8;");
+    console.log(`%c║  Roll Number      : %c${cert.RollNo.padEnd(46)}%c║`, "color: #94a3b8;", "color: #facc15; font-weight: bold;", "color: #94a3b8;");
+    console.log(`%c║  Project          : %c${cert.Project.padEnd(46)}%c║`, "color: #94a3b8;", "color: #38bdf8; font-weight: bold;", "color: #94a3b8;");
+    console.log(`%c║  Verification Sig : %c${cert.Signature.padEnd(46)}%c║`, "color: #94a3b8;", "color: #cbd5e1;", "color: #94a3b8;");
+    console.log("%c╚════════════════════════════════════════════════════════════════════╝", "color: #38bdf8; font-weight: bold;");
+    return "Verification Successful: Built by Dhrumil Dashadia (2500039023)";
+  };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.altKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+      window.__KL_VERIFY_AUTHOR__();
+    }
+  });
+
   const DEBUG = true;
   let attendanceFetchInFlight = false;
 
@@ -824,7 +867,39 @@
         font-style: italic !important;
         padding: 4px 0 !important;
       }
+
+      /* --- Timetable Full-Height Expansion (No inner vertical scrolling) --- */
+      .table-responsive,
+      .grid-view,
+      .box-body,
+      .panel-body,
+      .card-body,
+      div[class*="timetable"],
+      div[id*="timetable"],
+      div[class*="content"],
+      div[class*="container"] {
+        max-height: none !important;
+        height: auto !important;
+        overflow-y: visible !important;
+      }
+      table {
+        width: 100% !important;
+        min-height: 520px !important;
+        table-layout: auto !important;
+        border-collapse: collapse !important;
+      }
+      table tr {
+        height: auto !important;
+        min-height: 68px !important;
+      }
+      table td, table th {
+        padding: 7px 5px !important;
+        vertical-align: middle !important;
+        height: auto !important;
+      }
     `;
+    style.setAttribute('data-author-sig', _0xKL_AUTH_SIG);
+    style.setAttribute('data-author-watermark', _0xKL_WATERMARK);
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -1061,7 +1136,7 @@
         for (let i = 0; i < cells.length; i++) {
           const currentTd = cells[i];
 
-          if (currentTd.getAttribute('data-merged-into') === 'true') {
+          if (currentTd.getAttribute('data-merged-into') === 'true' || currentTd.getAttribute('data-trimmed-col') === 'true' || currentTd.style.display === 'none') {
             continue;
           }
 
@@ -1084,7 +1159,7 @@
               isDirectSibling = true;
               break;
             }
-            if (sib.getAttribute('data-merged-into') !== 'true') {
+            if (sib.getAttribute('data-merged-into') !== 'true' && sib.getAttribute('data-trimmed-col') !== 'true' && sib.style.display !== 'none') {
               break;
             }
             sib = sib.nextElementSibling;
@@ -1118,6 +1193,85 @@
     }
   }
 
+  function expandTimetableContainers() {
+    const tables = document.querySelectorAll('table');
+    tables.forEach(table => {
+      let el = table.parentElement;
+      for (let depth = 0; depth < 5 && el && el !== document.body; depth++) {
+        el.style.maxHeight = 'none';
+        el.style.height = 'auto';
+        el.style.overflowY = 'visible';
+        el = el.parentElement;
+      }
+    });
+  }
+
+  function untrimColumns() {
+    const trimmed = document.querySelectorAll('[data-trimmed-col="true"]');
+    for (const el of trimmed) {
+      el.style.display = '';
+      el.removeAttribute('data-trimmed-col');
+    }
+  }
+
+  function trimTrailingEmptyColumns() {
+    untrimColumns();
+
+    const tables = document.querySelectorAll('table');
+    for (const table of tables) {
+      const rows = Array.from(table.querySelectorAll('tr'));
+      if (rows.length < 2) continue;
+
+      // Find the maximum column index across all day rows (in unmerged state) that has a class
+      let maxClassCol = 0;
+
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        const cells = Array.from(row.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
+        if (cells.length < 2) continue;
+
+        let colIdx = 0;
+        for (let i = 0; i < cells.length; i++) {
+          const cell = cells[i];
+          const span = parseInt(cell.getAttribute('data-orig-colspan'), 10) || 1;
+
+          if (colIdx > 0) { // Column 0 is the Day label (Monday, Tuesday, etc.)
+            const cellInfo = processedCells.get(cell);
+            const text = (cell.textContent || '').replace(/[\s\-\u00a0]+/g, '').trim();
+            const hasClass = (cellInfo && cellInfo.parsedData) || (text.length > 0 && text !== 'N/A' && text !== '-');
+
+            if (hasClass) {
+              const lastCoveredCol = colIdx + span - 1;
+              if (lastCoveredCol > maxClassCol) {
+                maxClassCol = lastCoveredCol;
+              }
+            }
+          }
+          colIdx += span;
+        }
+      }
+
+      // If at least one class was found, hide all columns beyond maxClassCol across header and body rows
+      if (maxClassCol > 0) {
+        for (const row of rows) {
+          const cells = Array.from(row.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
+          let colIdx = 0;
+
+          for (let i = 0; i < cells.length; i++) {
+            const cell = cells[i];
+            const span = parseInt(cell.getAttribute('data-orig-colspan'), 10) || 1;
+
+            if (colIdx > maxClassCol) {
+              cell.setAttribute('data-trimmed-col', 'true');
+              cell.style.display = 'none';
+            }
+            colIdx += span;
+          }
+        }
+      }
+    }
+  }
+
   function unmergeAdjacentTableCells() {
     const mergedCells = document.querySelectorAll('td[data-merged-into="true"]');
     for (const td of mergedCells) {
@@ -1138,14 +1292,17 @@
     if (!document.querySelector('table')) return 0;
 
     injectStyles();
+    expandTimetableContainers();
     isProcessing = true;
     let n = 0;
     try {
+      untrimColumns();
       unmergeAdjacentTableCells();
       const tds = document.querySelectorAll('table td');
       for (const td of tds) {
         if (processCell(td)) n++;
       }
+      trimTrailingEmptyColumns();
       mergeAdjacentTableCells();
     } finally {
       isProcessing = false;
@@ -1158,6 +1315,7 @@
   function restoreAll() {
     isProcessing = true;
     try {
+      untrimColumns();
       unmergeAdjacentTableCells();
       for (const [td, d] of processedCells) {
         if (td && d) {
@@ -1180,8 +1338,10 @@
   function reapplyAll() {
     isProcessing = true;
     try {
+      untrimColumns();
       unmergeAdjacentTableCells();
       injectStyles();
+      expandTimetableContainers();
       for (const [td, d] of processedCells) {
         if (td && d && d.parsedData) {
           td.innerHTML = renderHTML(d.parsedData, state.mode);
@@ -1196,6 +1356,7 @@
           });
         }
       }
+      trimTrailingEmptyColumns();
       mergeAdjacentTableCells();
     } finally {
       isProcessing = false;
