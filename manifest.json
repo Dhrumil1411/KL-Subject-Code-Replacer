@@ -1,8 +1,8 @@
-﻿{
+{
   "manifest_version": 3,
   "name": "KL Subject Code Replacer",
-  "version": "2.0.0",
-  "description": "Replaces subject codes with full subject names, color-coded session badges, and prominent classroom indicators on KL University ERP.",
+  "version": "2.2.0",
+  "description": "Replaces subject codes with full subject names, color-coded session badges, prominent classroom indicators, live class tracker, and live 85% attendance bunk calculator for KL University ERP.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://newerp.kluniversity.in/*"
@@ -17,7 +17,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://newerp.kluniversity.in/*"],
+      "matches": [
+        "https://newerp.kluniversity.in/index.php?r=timetables%2Funiversitymasteracademictimetableview%2Findividualstudenttimetableget*",
+        "https://newerp.kluniversity.in/index.php?r=timetables/universitymasteracademictimetableview/individualstudenttimetableget*",
+        "https://newerp.kluniversity.in/index.php?r=*individualstudenttimetableget*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

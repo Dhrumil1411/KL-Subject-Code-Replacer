@@ -1,41 +1,36 @@
-﻿// popup.js  v2.0
+// popup.js v2.1 - Subject Replacer
 
 const toggle       = document.getElementById('toggle');
 const statusPill   = document.getElementById('status');
 const statusText   = document.getElementById('status-text');
+
 const modeSection  = document.getElementById('mode-section');
 const modeButtons  = document.querySelectorAll('.mode-btn');
 const previewAfter = document.getElementById('preview-after');
 
-const PREVIEWS = {
-  'name-only': `
+function getPreviewHTML(mode) {
+  const codeHtml = (mode === 'code+name') ? '<div class="pv-code">25CS2101L</div>' : '';
+
+  return `
     <div class="pv-card">
       <div class="pv-title">Front End Development Frameworks for Web Applications</div>
+      ${codeHtml}
       <div class="pv-badges">
+        <span class="pv-badge pv-badge-lecture">Lecture</span>
         <span class="pv-badge pv-badge-practical">Practical</span>
         <span class="pv-badge pv-badge-room">📍 Room C307</span>
         <span class="pv-badge pv-badge-sec">S-1</span>
+        <span class="pv-badge pv-badge-att">🟢 92% • Bunk 2</span>
       </div>
     </div>
-  `,
-  'code+name': `
-    <div class="pv-card">
-      <div class="pv-title">Front End Development Frameworks for Web Applications</div>
-      <div class="pv-code">25CS2101L</div>
-      <div class="pv-badges">
-        <span class="pv-badge pv-badge-practical">Practical</span>
-        <span class="pv-badge pv-badge-room">📍 Room C307</span>
-        <span class="pv-badge pv-badge-sec">S-1</span>
-      </div>
-    </div>
-  `
-};
+  `.trim();
+}
 
 function applyUI(enabled, mode) {
-  // Toggle switch
+  // 1. Replacer toggle switch
   toggle.checked = enabled;
 
-  // Status pill
+  // Replacer status pill
   if (enabled) {
     statusPill.className = 'status-pill on';
     statusText.textContent = 'Active — timetable formatted';
@@ -44,17 +39,17 @@ function applyUI(enabled, mode) {
     statusText.textContent = 'OFF — original codes shown';
   }
 
-  // Mode section dimmed when disabled
-  modeSection.style.opacity        = enabled ? '1' : '0.4';
-  modeSection.style.pointerEvents  = enabled ? 'auto' : 'none';
+  // 2. Mode section dimmed when replacer is disabled
+  modeSection.style.opacity       = enabled ? '1' : '0.4';
+  modeSection.style.pointerEvents = enabled ? 'auto' : 'none';
 
-  // Highlight correct mode button
+  // 3. Highlight correct mode button
   modeButtons.forEach(btn =>
     btn.classList.toggle('active', btn.dataset.mode === mode)
   );
 
-  // Update preview
-  previewAfter.innerHTML = PREVIEWS[mode] || PREVIEWS['name-only'];
+  // 4. Update preview
+  previewAfter.innerHTML = getPreviewHTML(mode);
 }
 
 // ── Load saved state on popup open ────────────────────────────────────────
@@ -62,7 +57,7 @@ chrome.storage.local.get({ enabled: true, mode: 'name-only' }, ({ enabled, mode 
   applyUI(enabled, mode);
 });
 
-// ── ON/OFF toggle ──────────────────────────────────────────────────────────
+// ── Subject Replacer ON/OFF toggle ─────────────────────────────────────────
 toggle.addEventListener('change', () => {
   const enabled = toggle.checked;
   chrome.storage.local.get({ mode: 'name-only' }, ({ mode }) => {

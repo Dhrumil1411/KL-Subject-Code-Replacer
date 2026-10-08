@@ -1,13 +1,19 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KL Subject Code Replacer</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
-      width: 310px;
+      width: 320px;
       font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
       background: #0f172a;
       color: #e2e8f0;
@@ -16,110 +22,261 @@
 
     /* Header */
     .header {
-      display: flex; align-items: center; gap: 10px;
-      padding: 14px 16px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 13px 16px 11px;
       border-bottom: 1px solid #1e293b;
+      background: #111827;
     }
+
     .logo {
-      width: 36px; height: 36px;
-      background: linear-gradient(135deg, #3b82f6, #6366f1);
-      border-radius: 9px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 13px; font-weight: 800; color: #fff; flex-shrink: 0;
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, rgb(25, 130, 196), rgb(159, 139, 232));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      flex-shrink: 0;
       letter-spacing: -0.5px;
+      box-shadow: 0 2px 6px rgba(25, 130, 196, 0.35);
     }
-    .header-text h1 { font-size: 13px; font-weight: 600; color: #f1f5f9; }
-    .header-text p  { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+    .header-text h1 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .header-text p {
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 2px;
+    }
 
     /* Section */
-    .section { padding: 12px 16px; border-bottom: 1px solid #1e293b; }
+    .section {
+      padding: 11px 16px;
+      border-bottom: 1px solid #1e293b;
+    }
+
     .section-label {
-      font-size: 9.5px; font-weight: 700; color: #475569;
-      text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 10px;
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
 
     /* Toggle row */
-    .row { display: flex; align-items: center; justify-content: space-between; }
-    .row-text span { font-size: 13px; font-weight: 500; color: #cbd5e1; }
-    .row-text small { display: block; font-size: 10px; color: #475569; margin-top: 2px; }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .row-text span {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #cbd5e1;
+    }
+
+    .row-text small {
+      display: block;
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 2px;
+    }
 
     /* Switch */
-    .switch { position: relative; width: 46px; height: 25px; flex-shrink: 0; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider {
-      position: absolute; inset: 0;
-      background: #334155; border-radius: 25px;
-      cursor: pointer; transition: background 0.22s;
+    .switch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
     }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #334155;
+      border-radius: 24px;
+      cursor: pointer;
+      transition: background 0.22s;
+    }
+
     .slider::before {
       content: "";
       position: absolute;
-      width: 19px; height: 19px; left: 3px; top: 3px;
-      background: #fff; border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      left: 3px;
+      top: 3px;
+      background: #fff;
+      border-radius: 50%;
       transition: transform 0.22s;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
     }
-    input:checked + .slider { background: #3b82f6; }
-    input:checked + .slider::before { transform: translateX(21px); }
+
+    input:checked+.slider {
+      background: rgb(25, 130, 196);
+    }
+
+    input:checked+.slider::before {
+      transform: translateX(20px);
+    }
 
     /* Status pill */
     .status-pill {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 4px 10px; border-radius: 20px;
-      font-size: 11px; margin-top: 10px; transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3.5px 9px;
+      border-radius: 20px;
+      font-size: 10.5px;
+      margin-top: 8px;
+      transition: all 0.2s;
     }
-    .status-pill.on  { background: #052e16; color: #4ade80; border: 1px solid #166534; }
-    .status-pill.off { background: #1c1917; color: #78716c; border: 1px solid #292524; }
-    .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-    .on  .dot { background: #22c55e; box-shadow: 0 0 5px #22c55e99; }
-    .off .dot { background: #57534e; }
+
+    .status-pill.on {
+      background: #052e16;
+      color: #4ade80;
+      border: 1px solid #166534;
+    }
+
+    .status-pill.off {
+      background: #1c1917;
+      color: #78716c;
+      border: 1px solid #292524;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .on .dot {
+      background: #22c55e;
+      box-shadow: 0 0 5px #22c55e99;
+    }
+
+    .off .dot {
+      background: #57534e;
+    }
 
     /* Mode selector */
-    .mode-selector { display: flex; gap: 6px; }
-    .mode-btn {
-      flex: 1; padding: 8px 6px;
-      border-radius: 8px; border: 1px solid #1e293b;
-      background: #1e293b; color: #64748b;
-      font-size: 11px; font-weight: 500; cursor: pointer;
-      text-align: center; transition: all 0.15s; line-height: 1.35;
+    .mode-selector {
+      display: flex;
+      gap: 6px;
     }
-    .mode-btn:hover { border-color: #334155; color: #94a3b8; }
-    .mode-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
-    .mode-btn .icon { font-size: 15px; display: block; margin-bottom: 3px; }
+
+    .mode-btn {
+      flex: 1;
+      padding: 7px 6px;
+      border-radius: 7px;
+      border: 1px solid #1e293b;
+      background: #1e293b;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+      line-height: 1.35;
+    }
+
+    .mode-btn:hover {
+      border-color: #334155;
+      color: #94a3b8;
+    }
+
+    .mode-btn.active {
+      background: #1e3a5f;
+      border-color: rgb(25, 130, 196);
+      color: #93c5fd;
+    }
+
+    .mode-btn .icon {
+      font-size: 14px;
+      display: block;
+      margin-bottom: 2px;
+    }
 
     /* Preview box */
     .preview {
-      margin-top: 10px; padding: 10px;
-      background: #020617; border: 1px solid #1e293b;
-      border-radius: 8px; font-size: 10px;
+      margin-top: 10px;
+      padding: 9px;
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 7px;
+      font-size: 10px;
     }
-    .preview .lbl  { font-size: 9px; color: #475569; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 3px; }
-    .preview .before { color: #64748b; font-family: monospace; font-size: 10px; word-break: break-all; }
-    .preview .arrow  { color: #3b82f6; text-align: center; margin: 5px 0; font-size: 11px; }
 
-    /* Formatted preview card styling */
+    .preview .lbl {
+      font-size: 9px;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 3px;
+    }
+
+    .preview .before {
+      color: #64748b;
+      font-family: monospace;
+      font-size: 9.5px;
+      word-break: break-all;
+    }
+
+    .preview .arrow {
+      color: rgb(25, 130, 196);
+      text-align: center;
+      margin: 4px 0;
+      font-size: 11px;
+    }
+
+    /* Preview card */
     .pv-card {
       background: #ffffff;
       border-radius: 6px;
-      padding: 8px 6px;
+      padding: 7px 6px;
       text-align: center;
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      gap: 3px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      transition: all 0.2s ease;
     }
+
     .pv-title {
       font-weight: 700;
       color: #0f172a;
       font-size: 11px;
       line-height: 1.25;
     }
+
     .pv-code {
       font-size: 9.5px;
       color: #475569;
       font-weight: 600;
       margin-top: -2px;
     }
+
     .pv-badges {
       display: flex;
       flex-wrap: wrap;
@@ -128,43 +285,86 @@
       align-items: center;
       margin-top: 2px;
     }
+
     .pv-badge {
       display: inline-flex;
       align-items: center;
       padding: 2px 5px;
       border-radius: 4px;
-      font-size: 9.5px;
+      font-size: 9px;
       font-weight: 700;
       line-height: 1.1;
       white-space: nowrap;
     }
-    .pv-badge-practical { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
-    .pv-badge-room      { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 800; }
-    .pv-badge-sec       { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+
+    .pv-badge-lecture {
+      background: #e0e7ff;
+      color: #3730a3;
+      border: 1px solid #c7d2fe;
+    }
+
+    .pv-badge-practical {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+
+    .pv-badge-room {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fca5a5;
+      font-weight: 800;
+    }
+
+    .pv-badge-sec {
+      background: #f1f5f9;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+    }
+
+    .pv-badge-att {
+      background: #dcfce7;
+      color: #15803d;
+      border: 1px solid #86efac;
+      font-weight: 700;
+    }
 
     /* Footer */
-    .footer { padding: 8px 16px; font-size: 10px; color: #334155; text-align: center; }
-    .footer a { color: #3b82f6; text-decoration: none; }
-    .footer a:hover { text-decoration: underline; }
+    .footer {
+      padding: 8px 16px;
+      font-size: 10px;
+      color: #475569;
+      text-align: center;
+    }
+
+    .footer a {
+      color: rgb(25, 130, 196);
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
+
 <body>
 
   <div class="header">
     <div class="logo">KL</div>
     <div class="header-text">
-      <h1>Subject Code Replacer</h1>
-      <p>KL University ERP</p>
+      <h1>KL ERP Enhancer</h1>
+      <p>Timetable Subject Replacer</p>
     </div>
   </div>
 
-  <!-- Enable / Disable -->
+  <!-- Subject Code Replacer Section -->
   <div class="section">
-    <div class="section-label">Extension</div>
+    <div class="section-label">Timetable Replacer</div>
     <div class="row">
       <div class="row-text">
-        <span>Enable Replacer</span>
-        <small>Formats timetable with badges & rooms</small>
+        <span>Subject Code Replacer</span>
+        <small>Converts codes to clear visual cards</small>
       </div>
       <label class="switch">
         <input type="checkbox" id="toggle" />
@@ -203,4 +403,5 @@
 
   <script src="popup.js"></script>
 </body>
+
 </html>
