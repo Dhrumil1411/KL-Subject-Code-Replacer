@@ -46,32 +46,386 @@
     return "Verification Successful: Built by Dhrumil Dashadia (2500039023)";
   };
 
+  window.simulateSession = (attended, conducted, hours) => simulateSession(attended, conducted, hours);
+  window.getSessionHours = (cell) => getSessionHours(cell);
+
   window.addEventListener('keydown', (e) => {
     if (e.altKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
       window.__KL_VERIFY_AUTHOR__();
     }
   });
 
-  const DEBUG = true;
+  const DEBUG = false;
   let attendanceFetchInFlight = false;
+  let attendanceFetchAttempted = false;
+  let lastPrintedUnmatched = '';
+  let unmatchedCourseCodesNotCoveredByBundle = new Set();
+  let lastMissingCourseFetchTime = 0;
 
-  // ── 1. Load subject codes ──────────────────────────────────────────────────
-  let subjectMap;
-  try {
-    const res = await fetch(chrome.runtime.getURL('subject_codes.json'));
-    subjectMap = await res.json();
-  } catch (err) {
-    return;
-  }
-
-  // UPPERCASE lookup: "25CS2101L" -> { name, originalCode }
-  const lookup = {};
-  for (const [code, name] of Object.entries(subjectMap || {})) {
-    if (code) {
-      lookup[code.trim().toUpperCase()] = { name, originalCode: code.trim() };
+  const loggedOnceSet = new Set();
+  function logOnce(msg) {
+    if (!loggedOnceSet.has(msg)) {
+      loggedOnceSet.add(msg);
+      console.log(msg);
     }
   }
-  const allCodes = Object.keys(lookup).sort((a, b) => b.length - a.length);
+
+  // ── 1. Acronyms & Course Name Formatting ──────────────────────────────────
+  const ACRONYMS = [
+    'AI', 'ML', 'IoT', 'OOP', 'DBMS', 'SQL', 'OS', 'DSA',
+    'UI', 'UX', 'HTML', 'CSS', 'JS', 'API', 'C', 'C++',
+    'Java', 'Python'
+  ];
+  const ACRONYM_MAP = new Map(ACRONYMS.map(a => [a.toUpperCase(), a]));
+  const SMALL_WORDS = new Set([
+    'and', 'of', 'for', 'to', 'in', 'on', 'the', 'with', 'using', 'a', 'an'
+  ]);
+
+  function formatCourseName(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    const collapsed = raw.trim().replace(/\s+/g, ' ');
+    if (!collapsed) return '';
+
+    const words = collapsed.split(' ');
+    const formattedWords = words.map((word, index) => {
+      const match = word.match(/^([(\[{'"“‘]*)(.*?)([)\]}'"”’.,;:]*)$/);
+      if (!match) return word;
+      const [, prefix, core, suffix] = match;
+      if (!core) return word;
+
+      const coreUpper = core.toUpperCase();
+      let formattedCore = '';
+
+      if (ACRONYM_MAP.has(coreUpper)) {
+        formattedCore = ACRONYM_MAP.get(coreUpper);
+      } else {
+        const coreLower = core.toLowerCase();
+        const isFirst = (index === 0);
+        if (!isFirst && SMALL_WORDS.has(coreLower)) {
+          formattedCore = coreLower;
+        } else {
+          if (core.includes('-')) {
+            formattedCore = core.split('-').map(part => {
+              const partUpper = part.toUpperCase();
+              if (ACRONYM_MAP.has(partUpper)) return ACRONYM_MAP.get(partUpper);
+              if (SMALL_WORDS.has(part.toLowerCase())) return part.toLowerCase();
+              return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+            }).join('-');
+          } else {
+            formattedCore = core.charAt(0).toUpperCase() + core.slice(1).toLowerCase();
+          }
+        }
+      }
+
+      return `${prefix}${formattedCore}${suffix}`;
+    });
+
+    return formattedWords.join(' ');
+  }
+
+  // ── 1b. ERP Profile Course Mapping Table Parser ────────────────────────────
+  function parseCourseMappingTable(docOrElement) {
+    if (!docOrElement) return [];
+    const tables = docOrElement.querySelectorAll ? Array.from(docOrElement.querySelectorAll('table')) : [];
+    if (docOrElement.tagName === 'TABLE') tables.unshift(docOrElement);
+
+    for (const table of tables) {
+      const rows = Array.from(table.querySelectorAll('tr'));
+      if (rows.length < 2) continue;
+
+      let colYear = -1, colAcademicYear = -1, colSemester = -1, colCourseCode = -1, colCourseDesc = -1;
+      let colLtps = -1, colSection = -1, colFaculty = -1;
+      let headerRowIdx = -1;
+
+      for (let r = 0; r < Math.min(5, rows.length); r++) {
+        const headerCells = Array.from(rows[r].querySelectorAll('th, td'));
+        headerCells.forEach((cell, idx) => {
+          const text = (cell.textContent || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (text === 'coursecode' || text === 'subjectcode') colCourseCode = idx;
+          else if (text === 'coursedesc' || text === 'coursename' || text === 'subjectname' || text === 'coursetitle') colCourseDesc = idx;
+          else if (text === 'academicyear') colAcademicYear = idx;
+          else if (text === 'year') colYear = idx;
+          else if (text === 'semester' || text === 'sem') colSemester = idx;
+          else if (text === 'ltps' || text === 'component') colLtps = idx;
+          else if (text === 'section' || text === 'sec') colSection = idx;
+          else if (text.includes('faculty') || text === 'facultyname') colFaculty = idx;
+        });
+
+        if (colCourseCode !== -1 && colCourseDesc !== -1) {
+          headerRowIdx = r;
+          break;
+        }
+      }
+
+      if (headerRowIdx === -1) continue;
+
+      const parsedRows = [];
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
+        const cells = Array.from(rows[r].querySelectorAll('td'));
+        if (!cells.length) continue;
+        const courseCode = colCourseCode !== -1 && cells[colCourseCode] ? cells[colCourseCode].textContent.trim() : '';
+        const rawCourseDesc = colCourseDesc !== -1 && cells[colCourseDesc] ? cells[colCourseDesc].textContent.trim() : '';
+        if (!courseCode || !rawCourseDesc) continue;
+
+        parsedRows.push({
+          year: colYear !== -1 && cells[colYear] ? cells[colYear].textContent.trim().replace(/\s+/g, ' ') : '',
+          academicYear: colAcademicYear !== -1 && cells[colAcademicYear] ? cells[colAcademicYear].textContent.trim().replace(/\s+/g, ' ') : '',
+          semester: colSemester !== -1 && cells[colSemester] ? cells[colSemester].textContent.trim().replace(/\s+/g, ' ') : '',
+          courseCode,
+          courseName: formatCourseName(rawCourseDesc),
+          ltps: colLtps !== -1 && cells[colLtps] ? cells[colLtps].textContent.trim().replace(/\s+/g, ' ') : '',
+          section: colSection !== -1 && cells[colSection] ? cells[colSection].textContent.trim().replace(/\s+/g, ' ') : '',
+          faculty: colFaculty !== -1 && cells[colFaculty] ? cells[colFaculty].textContent.trim().replace(/\s+/g, ' ') : ''
+        });
+      }
+
+      if (parsedRows.length > 0) {
+        // Partial list check: look for "Showing 1-15 of 15 items" summary
+        const root = docOrElement.ownerDocument || (docOrElement.querySelectorAll ? docOrElement : document);
+        const summaryEl = root.querySelector ? root.querySelector('.summary') : null;
+        const summaryText = (summaryEl ? summaryEl.textContent : (root.textContent || '')).replace(/\s+/g, ' ');
+        const match = summaryText.match(/showing\s+[\d\-–—]+\s+of\s+([0-9]+)\s+items?/i);
+        if (match) {
+          const total = parseInt(match[1], 10);
+          if (!isNaN(total) && total > 0 && parsedRows.length < total) {
+            logOnce(`[KL Replacer] course list may be partial (parsed ${parsedRows.length} of ${total})`);
+          }
+        }
+        return parsedRows;
+      }
+    }
+    return [];
+  }
+
+  function getRecencyScore(academicYear, semester, year) {
+    let score = 0;
+    if (academicYear) {
+      const match = academicYear.match(/\d{4}/);
+      if (match) score += parseInt(match[0], 10) * 100;
+    }
+    if (year) {
+      score += (parseInt(year, 10) || 0) * 10;
+    }
+    if (semester) {
+      const s = semester.toLowerCase();
+      if (s.includes('summer')) score += 3;
+      else if (s.includes('even')) score += 2;
+      else if (s.includes('odd')) score += 1;
+    }
+    return score;
+  }
+
+  function organizeCourseMapping(rows) {
+    if (!rows || !rows.length) return null;
+
+    let maxScore = -1;
+    let newestAcademicYear = '';
+    let newestSemester = '';
+
+    for (const r of rows) {
+      const score = getRecencyScore(r.academicYear, r.semester, r.year);
+      if (score > maxScore) {
+        maxScore = score;
+        newestAcademicYear = r.academicYear || newestAcademicYear;
+        newestSemester = r.semester || newestSemester;
+      }
+    }
+
+    const codeScores = new Map();
+    for (const r of rows) {
+      const code = r.courseCode;
+      const score = getRecencyScore(r.academicYear, r.semester, r.year);
+      if (!codeScores.has(code) || score > codeScores.get(code).score) {
+        codeScores.set(code, { score, rows: [r] });
+      } else if (score === codeScores.get(code).score) {
+        codeScores.get(code).rows.push(r);
+      }
+    }
+
+    const byCode = {};
+    for (const [code, { rows: matchedRows }] of codeScores.entries()) {
+      const first = matchedRows[0];
+      const components = [];
+      const seenComp = new Set();
+      for (const row of matchedRows) {
+        const compKey = `${row.ltps}_${row.section}_${row.faculty}`;
+        if (!seenComp.has(compKey)) {
+          seenComp.add(compKey);
+          components.push({
+            ltps: row.ltps || '',
+            section: row.section || '',
+            faculty: row.faculty || ''
+          });
+        }
+      }
+      byCode[code] = {
+        name: first.courseName,
+        components
+      };
+    }
+
+    return {
+      fetchedAt: Date.now(),
+      academicYear: newestAcademicYear,
+      semester: newestSemester,
+      byCode
+    };
+  }
+
+  // ── 1c. Load bundled & personal subject codes ─────────────────────────────
+  let subjectMap = (typeof window !== 'undefined' && window.__KL_COURSES__) ? window.__KL_COURSES__ : null;
+  if (!subjectMap) {
+    try {
+      const res = await fetch(chrome.runtime.getURL('subject_codes.json'));
+      subjectMap = await res.json();
+    } catch (err) {
+      subjectMap = {};
+    }
+  }
+
+  const bundledCourses = {};
+  const bundledOriginalCodes = {};
+  for (const [code, name] of Object.entries(subjectMap || {})) {
+    if (code) {
+      const trimmed = code.trim();
+      const upper = trimmed.toUpperCase();
+      bundledCourses[upper] = name;
+      bundledOriginalCodes[upper] = trimmed;
+    }
+  }
+
+  let myCourses = { fetchedAt: 0, academicYear: '', semester: '', byCode: {} };
+  let bannerDismissedAt = 0;
+  let lookup = {};
+  let allCodes = [];
+
+  function rebuildLookups() {
+    const nextLookup = {};
+    const codeSet = new Set();
+
+    // 1. Populate from bundled courses
+    for (const [upper, name] of Object.entries(bundledCourses)) {
+      const orig = bundledOriginalCodes[upper] || upper;
+      nextLookup[upper] = { name, originalCode: orig, source: 'bundled' };
+      codeSet.add(upper);
+      if (upper.endsWith('L') || upper.endsWith('P')) {
+        const base = upper.slice(0, -1);
+        if (!nextLookup[base]) {
+          nextLookup[base] = { name, originalCode: orig, source: 'bundled' };
+        }
+        codeSet.add(base);
+      }
+    }
+
+    // 2. Overwrite / prioritize from myCourses.byCode
+    if (myCourses && myCourses.byCode) {
+      for (const [rawCode, data] of Object.entries(myCourses.byCode)) {
+        if (!rawCode || !data) continue;
+        const trimmed = rawCode.trim();
+        const upper = trimmed.toUpperCase();
+        nextLookup[upper] = { name: data.name, originalCode: trimmed, source: 'my_courses' };
+        codeSet.add(upper);
+
+        if (upper.endsWith('L') || upper.endsWith('P')) {
+          const base = upper.slice(0, -1);
+          nextLookup[base] = { name: data.name, originalCode: trimmed, source: 'my_courses' };
+          codeSet.add(base);
+        } else {
+          const withL = upper + 'L';
+          const withP = upper + 'P';
+          if (!nextLookup[withL]) nextLookup[withL] = { name: data.name, originalCode: trimmed, source: 'my_courses' };
+          if (!nextLookup[withP]) nextLookup[withP] = { name: data.name, originalCode: trimmed, source: 'my_courses' };
+          codeSet.add(withL);
+          codeSet.add(withP);
+        }
+      }
+    }
+
+    for (const key of Object.keys(lookup)) {
+      delete lookup[key];
+    }
+    Object.assign(lookup, nextLookup);
+    allCodes = Array.from(codeSet).sort((a, b) => b.length - a.length);
+  }
+
+  rebuildLookups();
+
+  function extractBaseCourseCode(raw) {
+    if (!raw) return '';
+    let str = raw.trim().toUpperCase();
+    // Split off trailing component suffixes: -L, -T, -P, -S, _L, _T, _P, _S
+    str = str.replace(/[-_\s]+[LTPS]$/i, '');
+    return str;
+  }
+
+  function resolveCourse(rawCode) {
+    if (!rawCode) return null;
+    const clean = rawCode.trim();
+    const upper = clean.toUpperCase();
+    const base = extractBaseCourseCode(clean);
+
+    // 1. kl_my_courses.byCode
+    if (myCourses && myCourses.byCode) {
+      if (myCourses.byCode[base]) {
+        return { name: myCourses.byCode[base].name, originalCode: base, source: 'my_courses' };
+      }
+      if (myCourses.byCode[clean]) {
+        return { name: myCourses.byCode[clean].name, originalCode: clean, source: 'my_courses' };
+      }
+      if (myCourses.byCode[upper]) {
+        return { name: myCourses.byCode[upper].name, originalCode: upper, source: 'my_courses' };
+      }
+      if (base.endsWith('L') || base.endsWith('P')) {
+        const stripped = base.slice(0, -1);
+        if (myCourses.byCode[stripped]) {
+          return { name: myCourses.byCode[stripped].name, originalCode: stripped, source: 'my_courses' };
+        }
+      } else {
+        if (myCourses.byCode[base + 'L']) {
+          return { name: myCourses.byCode[base + 'L'].name, originalCode: base + 'L', source: 'my_courses' };
+        }
+        if (myCourses.byCode[base + 'P']) {
+          return { name: myCourses.byCode[base + 'P'].name, originalCode: base + 'P', source: 'my_courses' };
+        }
+      }
+    }
+
+    // 2. Bundled course data
+    if (bundledCourses) {
+      if (bundledCourses[base]) {
+        return { name: bundledCourses[base], originalCode: bundledOriginalCodes[base] || base, source: 'bundled' };
+      }
+      if (bundledCourses[clean]) {
+        return { name: bundledCourses[clean], originalCode: bundledOriginalCodes[clean] || clean, source: 'bundled' };
+      }
+      if (bundledCourses[upper]) {
+        return { name: bundledCourses[upper], originalCode: bundledOriginalCodes[upper] || upper, source: 'bundled' };
+      }
+      if (base.endsWith('L') || base.endsWith('P')) {
+        const stripped = base.slice(0, -1);
+        if (bundledCourses[stripped]) {
+          return { name: bundledCourses[stripped], originalCode: bundledOriginalCodes[stripped] || stripped, source: 'bundled' };
+        }
+      } else {
+        if (bundledCourses[base + 'L']) {
+          return { name: bundledCourses[base + 'L'].name, originalCode: bundledOriginalCodes[base + 'L'] || base + 'L', source: 'bundled' };
+        }
+        if (bundledCourses[base + 'P']) {
+          return { name: bundledCourses[base + 'P'].name, originalCode: bundledOriginalCodes[base + 'P'] || base + 'P', source: 'bundled' };
+        }
+      }
+    }
+
+    // 3. Fallback
+    return null;
+  }
+
+  // Exposed verification and diagnostic hooks on window
+  window.formatCourseName = formatCourseName;
+  window.parseCourseMappingTable = parseCourseMappingTable;
+  window.organizeCourseMapping = organizeCourseMapping;
+  window.extractBaseCourseCode = extractBaseCourseCode;
+  window.resolveCourse = resolveCourse;
 
   // ── 2. Shared mutable state ────────────────────────────────────────────────
   const state = {
@@ -83,11 +437,22 @@
 
   await new Promise(resolve => {
     try {
-      chrome.storage.local.get({ enabled: true, mode: 'name-only', kl_attendance_data: {} }, (res) => {
+      chrome.storage.local.get({
+        enabled: true,
+        mode: 'name-only',
+        kl_attendance_data: {},
+        kl_my_courses: { fetchedAt: 0, academicYear: '', semester: '', byCode: {} },
+        kl_course_banner_dismissed_at: 0,
+        kl_last_missing_fetch_time: 0
+      }, (res) => {
         if (res) {
           if (res.enabled !== undefined) state.enabled = Boolean(res.enabled);
           if (res.mode !== undefined) state.mode = String(res.mode);
           if (res.kl_attendance_data) state.attendanceData = res.kl_attendance_data;
+          if (res.kl_my_courses) myCourses = res.kl_my_courses;
+          if (res.kl_course_banner_dismissed_at) bannerDismissedAt = Number(res.kl_course_banner_dismissed_at) || 0;
+          if (res.kl_last_missing_fetch_time) lastMissingCourseFetchTime = Number(res.kl_last_missing_fetch_time) || 0;
+          rebuildLookups();
         }
         resolve();
       });
@@ -271,17 +636,22 @@
   }
 
   async function fetchLiveAttendanceData() {
-    if (attendanceFetchInFlight) return;
+    if (!isTimetablePage() || attendanceFetchInFlight || attendanceFetchAttempted) return;
+
+    const { academicyear, semesterid } = extractAcademicParams();
+    if (!academicyear || !semesterid) {
+      return;
+    }
+
+    attendanceFetchAttempted = true;
     attendanceFetchInFlight = true;
 
     try {
-      const { academicyear, semesterid } = extractAcademicParams();
       let { param: csrfParam, token: csrfToken } = getCsrfInfo();
-
       const parser = new DOMParser();
 
-      // Step 1: If CSRF token is missing from the timetable DOM, fetch searchgetinput to grab token
-      if (!csrfToken) {
+      // Step 1: If CSRF token meta tag is missing on the timetable page, fetch searchgetinput to grab token
+      if (isTimetablePage() && !document.querySelector('meta[name="csrf-token"]')) {
         try {
           const mainRes = await fetch('https://newerp.kluniversity.in/index.php?r=studentattendance%2Fstudentdailyattendance%2Fsearchgetinput', {
             method: 'GET',
@@ -297,7 +667,9 @@
             if (mToken) csrfToken = mToken;
           }
         } catch (eToken) {
-          console.warn('[KL Replacer] Failed to fetch fallback CSRF token:', eToken);
+          if (DEBUG) {
+            console.warn('[KL Replacer] Failed to fetch fallback CSRF token:', eToken);
+          }
         }
       }
 
@@ -306,8 +678,8 @@
 
       const payload = new URLSearchParams();
       if (csrfToken) payload.append(csrfParam || '_csrf', csrfToken);
-      if (academicyear) payload.append('DynamicModel[academicyear]', academicyear);
-      if (semesterid) payload.append('DynamicModel[semesterid]', semesterid);
+      payload.append('DynamicModel[academicyear]', academicyear);
+      payload.append('DynamicModel[semesterid]', semesterid);
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -321,7 +693,12 @@
       });
 
       if (!response.ok) {
-        console.warn('[KL Replacer] courselist failed', response.status, (await response.text()).slice(0, 200));
+        if (DEBUG) {
+          const bodySnippet = (await response.text().catch(() => '')).slice(0, 300);
+          console.warn(`[KL Replacer] courselist failed (HTTP ${response.status}):`, bodySnippet);
+        } else {
+          console.warn(`[KL Replacer] courselist failed (HTTP ${response.status})`);
+        }
         return;
       }
 
@@ -336,23 +713,334 @@
       if (Object.keys(parsedMap).length > 0) {
         state.attendanceData = Object.assign({}, state.attendanceData, parsedMap);
         chrome.storage.local.set({ kl_attendance_data: state.attendanceData });
-        if (state.enabled) {
+        if (state.enabled && isTimetablePage()) {
           reapplyAll();
         }
-        console.log(`[KL Replacer] ✓ Live attendance successfully synced (${Object.keys(parsedMap).length} courses)`);
+        logOnce(`[KL Replacer] ✓ Live attendance successfully synced (${Object.keys(parsedMap).length} courses)`);
       } else {
         if (DEBUG) {
           console.log('[KL Replacer] courselist returned 200, but 0 courses parsed. Snippet:', htmlText.slice(0, 500));
         }
       }
     } catch (err) {
-      console.warn('[KL Replacer] Error fetching live attendance:', err);
+      if (DEBUG) {
+        console.warn('[KL Replacer] Error fetching live attendance:', err);
+      }
     } finally {
       attendanceFetchInFlight = false;
     }
   }
 
+  // ── 4b. Profile Course Mapping Auto-Fetcher & Passive Capture Engine ────────
+  let courseFetchInFlight = false;
+  let lastMissingCourseFetchAttempt = 0;
+  let courseFetchFailed = false;
+
+  function isTimetablePage() {
+    const href = window.location.href || '';
+    if (href.includes('individualstudenttimetableget')) return true;
+    if (href.includes('timetables/universitymasteracademictimetableview')) return true;
+    if (href.includes('timetables%2Funiversitymasteracademictimetableview')) return true;
+    if (document.querySelector('table#timetable, table.timetable, table[id*="timetable" i], table[class*="timetable" i]')) return true;
+    const tables = document.querySelectorAll('table');
+    for (const t of tables) {
+      const text = t.textContent || '';
+      if (/mon(day)?/i.test(text) && /tue(s|sday)?/i.test(text) && /wed(nesday)?/i.test(text)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isProfilePage() {
+    const href = window.location.href || '';
+    return href.includes('studentprofileinfo') || href.includes('viewprofileindi');
+  }
+
+  async function fetchMyCourses(triggerReason = 'auto') {
+    const COURSE_MAPPING_CONFIG = {
+      url: 'https://newerp.kluniversity.in/index.php?r=studentinfo%2Fstudentcoursemappingmasterinfoview%2Ftab_index_personal',
+      options: {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      }
+    };
+
+    if (courseFetchInFlight) return;
+    courseFetchInFlight = true;
+
+    try {
+      if (DEBUG) {
+        console.log(`[KL Replacer] Fetching student course mapping (reason: ${triggerReason})...`);
+      }
+      const response = await fetch(COURSE_MAPPING_CONFIG.url, COURSE_MAPPING_CONFIG.options);
+
+      const method = (COURSE_MAPPING_CONFIG.options && COURSE_MAPPING_CONFIG.options.method) || 'GET';
+
+      if (!response.ok) {
+        logOnce(`[KL Replacer] course fetch: ${method} status=${response.status} hasTable=false`);
+        console.warn(`[KL Replacer] Course mapping request failed with HTTP ${response.status}`);
+        courseFetchFailed = true;
+        if (isTimetablePage()) checkAndShowFallbackBanner();
+        return;
+      }
+
+      const htmlText = await response.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlText, 'text/html');
+      const rows = parseCourseMappingTable(doc);
+      const hasTable = Boolean(rows && rows.length > 0);
+
+      logOnce(`[KL Replacer] course fetch: ${method} status=${response.status} hasTable=${hasTable}`);
+
+      if (!hasTable) {
+        console.warn('[KL Replacer] Course mapping response contained no valid courses table');
+        courseFetchFailed = true;
+        if (isTimetablePage()) checkAndShowFallbackBanner();
+        return;
+      }
+
+      const organized = organizeCourseMapping(rows);
+      if (!organized || !organized.byCode || Object.keys(organized.byCode).length === 0) {
+        console.warn('[KL Replacer] Could not parse valid course codes from mapping table');
+        courseFetchFailed = true;
+        if (isTimetablePage()) checkAndShowFallbackBanner();
+        return;
+      }
+
+      courseFetchFailed = false;
+      myCourses = organized;
+      rebuildLookups();
+      chrome.storage.local.set({ kl_my_courses: organized });
+      logOnce(`[KL Replacer] ✓ Successfully auto-loaded ${Object.keys(organized.byCode).length} courses from ERP profile`);
+
+      removeFallbackBanner();
+
+      if (state.enabled && isTimetablePage()) {
+        reapplyAll();
+        processTables();
+      }
+    } catch (err) {
+      console.warn('[KL Replacer] Error while fetching student courses:', err && err.message ? err.message : err);
+      courseFetchFailed = true;
+      if (isTimetablePage()) checkAndShowFallbackBanner();
+    } finally {
+      courseFetchInFlight = false;
+    }
+  }
+
+  window.fetchMyCourses = fetchMyCourses;
+
+  function showFallbackBanner() {
+    if (document.getElementById('kl-fallback-banner')) return;
+    const target = document.getElementById('kl-live-widget') || document.querySelector('table');
+    if (!target || !target.parentElement) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'kl-fallback-banner';
+    banner.innerHTML = `
+      <span class="kl-banner-text">To show your course names, open <a href="/index.php?r=studentinfo%2Fstudentprofileinfo%2Fviewprofileindi" target="_blank" rel="noopener noreferrer">Profile → Courses</a> once.</span>
+      <button type="button" class="kl-banner-dismiss" aria-label="Dismiss banner">Dismiss</button>
+    `;
+
+    const dismissBtn = banner.querySelector('.kl-banner-dismiss');
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        banner.remove();
+        bannerDismissedAt = Date.now();
+        chrome.storage.local.set({ kl_course_banner_dismissed_at: bannerDismissedAt });
+      });
+    }
+
+    target.parentElement.insertBefore(banner, target);
+  }
+
+  function removeFallbackBanner() {
+    const banner = document.getElementById('kl-fallback-banner');
+    if (banner) banner.remove();
+  }
+
+  function checkAndShowFallbackBanner() {
+    if (!isTimetablePage()) return;
+
+    // Condition (a): Automatic fetch failed
+    if (!courseFetchFailed) {
+      removeFallbackBanner();
+      return;
+    }
+
+    // Condition (b): Nothing usable is stored in kl_my_courses
+    const hasUsable = myCourses && myCourses.byCode && Object.keys(myCourses.byCode).length > 0;
+    if (hasUsable) {
+      removeFallbackBanner();
+      return;
+    }
+
+    // Remember dismissal for 24 hours
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    if (Date.now() - bannerDismissedAt < ONE_DAY) {
+      removeFallbackBanner();
+      return;
+    }
+
+    // Condition (c): At least one real course cell code isn't covered by bundled course data
+    if (unmatchedCourseCodesNotCoveredByBundle.size === 0) {
+      removeFallbackBanner();
+      return;
+    }
+
+    showFallbackBanner();
+  }
+
+  let profilePassiveCaptured = false;
+  let profileObserver = null;
+
+  function initProfilePassiveCapture() {
+    if (!isProfilePage() || profilePassiveCaptured) return;
+
+    function checkForCourseTable() {
+      if (profilePassiveCaptured) return true;
+      const tables = document.querySelectorAll('table');
+      for (const table of tables) {
+        const rows = table.querySelectorAll('tr');
+        if (rows.length < 2) continue;
+        let hasCourseCode = false;
+        let hasCourseDesc = false;
+        for (let r = 0; r < Math.min(5, rows.length); r++) {
+          const cells = rows[r].querySelectorAll('th, td');
+          for (const cell of cells) {
+            const txt = (cell.textContent || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (txt === 'coursecode' || txt === 'subjectcode') hasCourseCode = true;
+            if (txt === 'coursedesc' || txt === 'coursename' || txt === 'subjectname' || txt === 'coursetitle') hasCourseDesc = true;
+          }
+          if (hasCourseCode && hasCourseDesc) break;
+        }
+
+        if (hasCourseCode && hasCourseDesc) {
+          const parsedRows = parseCourseMappingTable(table);
+          if (parsedRows && parsedRows.length > 0) {
+            const organized = organizeCourseMapping(parsedRows);
+            if (organized && organized.byCode && Object.keys(organized.byCode).length > 0) {
+              profilePassiveCaptured = true;
+              myCourses = organized;
+              rebuildLookups();
+              chrome.storage.local.set({ kl_my_courses: organized });
+              logOnce(`[KL Replacer] ✓ Passively captured ${Object.keys(organized.byCode).length} courses from Profile Courses table`);
+              if (profileObserver) {
+                profileObserver.disconnect();
+                profileObserver = null;
+              }
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    // 1. Immediate check if table already present
+    if (checkForCourseTable()) return;
+
+    // 2. Watch document for course table injection
+    profileObserver = new MutationObserver(() => {
+      checkForCourseTable();
+    });
+
+    profileObserver.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  async function checkAndTriggerCourseFetch(context = {}) {
+    if (courseFetchInFlight) return;
+
+    const hasStored = myCourses && myCourses.byCode && Object.keys(myCourses.byCode).length > 0;
+    const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+    const isOlderThan7Days = !myCourses.fetchedAt || (Date.now() - myCourses.fetchedAt > SEVEN_DAYS);
+
+    // Trigger 1: Nothing stored
+    if (!hasStored) {
+      await fetchMyCourses('nothing_stored');
+      return;
+    }
+
+    // Trigger 2: Stored data older than 7 days
+    if (isOlderThan7Days) {
+      await fetchMyCourses('older_than_7_days');
+      return;
+    }
+
+    // Trigger 4: Academic year or semester in timetable URL differs from stored one
+    if (isTimetablePage()) {
+      const { academicyear, semesterid } = extractAcademicParams();
+      if (academicyear && myCourses.academicYear) {
+        const urlYearNum = academicyear.replace(/[^0-9]/g, '');
+        const storedYearNum = myCourses.academicYear.replace(/[^0-9]/g, '');
+        if (urlYearNum && storedYearNum && urlYearNum !== storedYearNum) {
+          await fetchMyCourses('academic_year_changed');
+          return;
+        }
+      }
+      if (semesterid && myCourses.semester) {
+        const urlSem = semesterid.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const storedSem = myCourses.semester.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (urlSem && storedSem && !storedSem.includes(urlSem) && !urlSem.includes(storedSem)) {
+          await fetchMyCourses('semester_changed');
+          return;
+        }
+      }
+    }
+
+    // Trigger 3: A real course cell code not found in byCode or bundled data
+    // (at most once per hour, remembered in storage)
+    if (context.hasMissingCode) {
+      const ONE_HOUR = 60 * 60 * 1000;
+      if (Date.now() - lastMissingCourseFetchTime > ONE_HOUR) {
+        lastMissingCourseFetchTime = Date.now();
+        chrome.storage.local.set({ kl_last_missing_fetch_time: lastMissingCourseFetchTime });
+        await fetchMyCourses('missing_timetable_code');
+        return;
+      }
+    }
+  }
+
   // ── 5. 85% Attendance Safety & Bunk Math Calculation ───────────────────────
+  function simulateSession(attended, conducted, hours = 1) {
+    attended = Number(attended) || 0;
+    conducted = Number(conducted) || 0;
+    const h = Math.max(1, Number(hours) || 1);
+
+    const attendedIfAttended = attended + h;
+    const conductedAfter = conducted + h;
+    const attendedIfMissed = attended;
+
+    const attendPct = conductedAfter > 0
+      ? Number(((attendedIfAttended / conductedAfter) * 100).toFixed(1))
+      : 100;
+    const missPct = conductedAfter > 0
+      ? Number(((attendedIfMissed / conductedAfter) * 100).toFixed(1))
+      : 0;
+
+    return {
+      ifAttended: {
+        a: attendedIfAttended,
+        c: conductedAfter,
+        percent: attendPct
+      },
+      ifMissed: {
+        a: attendedIfMissed,
+        c: conductedAfter,
+        percent: missPct
+      }
+    };
+  }
+
   function calculateBunkStatus(conducted, attended, target = 0.85) {
     conducted = Number(conducted) || 0;
     attended = Number(attended) || 0;
@@ -377,14 +1065,17 @@
     const percentage = (attended / conducted) * 100;
     const targetPct = target * 100;
 
-    // Simulation for next session
-    const missPct = (attended / (conducted + 1)) * 100;
-    const attendPct = ((attended + 1) / (conducted + 1)) * 100;
+    // Simulation for next session (default 1 hr baseline)
+    const sim1 = simulateSession(attended, conducted, 1);
 
     if (percentage >= targetPct) {
       // Bunks Left: Math.floor((attended - 0.85 * conducted) / 0.85)
       const bunksLeft = Math.floor((attended - target * conducted) / target);
       const isBorderline = (bunksLeft === 0);
+
+      const msg = bunksLeft >= 1
+        ? `You can miss up to ${bunksLeft} ${bunksLeft === 1 ? 'hour' : 'hours'} and stay above 85%.`
+        : `Zero bunks remaining. Missing even one hour drops you below 85%.`;
 
       return {
         conducted,
@@ -394,13 +1085,11 @@
         status: isBorderline ? 'WARNING' : 'SAFE',
         bunkableCount: bunksLeft,
         requiredCount: 0,
-        missImpactPercentage: Number(missPct.toFixed(1)),
-        attendImpactPercentage: Number(attendPct.toFixed(1)),
+        missImpactPercentage: sim1.ifMissed.percent,
+        attendImpactPercentage: sim1.ifAttended.percent,
         badgeText: isBorderline ? `${percentage.toFixed(0)}% • Borderline` : `${percentage.toFixed(0)}% • Bunk ${bunksLeft}`,
         badgeClass: isBorderline ? 'warning' : 'safe',
-        message: isBorderline
-          ? `🟡 You are right at 85%! Zero bunks remaining. Do not miss upcoming classes.`
-          : `🎉 You can safely bunk ${bunksLeft} upcoming ${bunksLeft === 1 ? 'class' : 'classes'} and stay above 85%!`
+        message: msg
       };
     } else {
       // Classes to Attend: Math.ceil((0.85 * conducted - attended) / 0.15)
@@ -414,11 +1103,11 @@
         status: 'CRITICAL',
         bunkableCount: 0,
         requiredCount: classesToAttend,
-        missImpactPercentage: Number(missPct.toFixed(1)),
-        attendImpactPercentage: Number(attendPct.toFixed(1)),
+        missImpactPercentage: sim1.ifMissed.percent,
+        attendImpactPercentage: sim1.ifAttended.percent,
         badgeText: `${percentage.toFixed(0)}% • Attend +${classesToAttend}`,
         badgeClass: 'critical',
-        message: `🚨 You must attend the next ${classesToAttend} consecutive ${classesToAttend === 1 ? 'class' : 'classes'} without fail to reach 85%!`
+        message: `Attend the next ${classesToAttend} ${classesToAttend === 1 ? 'hour' : 'hours'} to get back to 85%.`
       };
     }
   }
@@ -532,6 +1221,45 @@
         background: #f1f5f9 !important;
         color: #334155 !important;
         border: 1px solid #cbd5e1 !important;
+      }
+
+      /* --- Fallback Banner --- */
+      #kl-fallback-banner {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        background: #f8fafc !important;
+        border: 1px solid #cbd5e1 !important;
+        color: #334155 !important;
+        padding: 9px 14px !important;
+        border-radius: 8px !important;
+        margin: 12px 0 !important;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        font-size: 13px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+        box-sizing: border-box !important;
+      }
+      #kl-fallback-banner a {
+        color: #0284c7 !important;
+        font-weight: 700 !important;
+        text-decoration: underline !important;
+      }
+      #kl-fallback-banner .kl-banner-dismiss {
+        background: #e2e8f0 !important;
+        border: 1px solid #cbd5e1 !important;
+        color: #475569 !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        cursor: pointer !important;
+        padding: 4px 10px !important;
+        margin-left: 12px !important;
+        border-radius: 6px !important;
+        line-height: 1.2 !important;
+        transition: all 0.2s ease !important;
+      }
+      #kl-fallback-banner .kl-banner-dismiss:hover {
+        background: #cbd5e1 !important;
+        color: #0f172a !important;
       }
 
       /* --- Attendance Safety & Bunk Badges --- */
@@ -970,6 +1698,63 @@
     return popoverElem;
   }
 
+  function getSessionHours(cell) {
+    if (!cell || !(cell instanceof Element)) return 1;
+    const td = (cell.tagName === 'TD' || cell.tagName === 'TH') ? cell : cell.closest('td, th');
+    if (!td) return 1;
+
+    let span = td.colSpan || 1;
+    if (span <= 1) return 1;
+
+    const tr = td.parentElement;
+    const table = tr ? tr.closest('table') : null;
+    if (!table) return Math.max(1, span);
+
+    const rows = table.querySelectorAll('tr');
+    if (!rows.length) return Math.max(1, span);
+
+    // Identify lunch / break columns from the table header
+    const headerRow = rows[0];
+    const headerCells = Array.from(headerRow.children);
+    const lunchColIndices = new Set();
+    let colIdx = 0;
+
+    for (let i = 0; i < headerCells.length; i++) {
+      const th = headerCells[i];
+      const thSpan = th.colSpan || 1;
+      const text = (th.textContent || '').trim();
+      if (/(lunch|break|recess)/i.test(text)) {
+        for (let s = 0; s < thSpan; s++) {
+          lunchColIndices.add(colIdx + s);
+        }
+      }
+      colIdx += thSpan;
+    }
+
+    if (lunchColIndices.size === 0) {
+      return Math.max(1, span);
+    }
+
+    // Determine starting column index of this cell in the row
+    let cellStartCol = 0;
+    for (const sib of tr.children) {
+      if (sib === td) break;
+      if (sib.style.display !== 'none' && sib.getAttribute('data-merged-into') !== 'true') {
+        cellStartCol += (sib.colSpan || 1);
+      }
+    }
+    const cellEndCol = cellStartCol + span - 1;
+
+    let breakCount = 0;
+    for (let c = cellStartCol; c <= cellEndCol; c++) {
+      if (lunchColIndices.has(c)) {
+        breakCount++;
+      }
+    }
+
+    return Math.max(1, span - breakCount);
+  }
+
   function showBunkPopover(badge) {
     const pop = createOrGetBunkPopover();
 
@@ -979,6 +1764,16 @@
     const conducted = parseInt(badge.getAttribute('data-conducted') || '0', 10);
     const attended = parseInt(badge.getAttribute('data-attended') || '0', 10);
     const status = calculateBunkStatus(conducted, attended, 0.85);
+
+    const td = badge.closest('td');
+    const hours = parseInt(
+      badge.getAttribute('data-hours') ||
+      (td ? td.getAttribute('data-hours') : '') ||
+      (td ? getSessionHours(td) : 1),
+      10
+    ) || 1;
+    const sim = simulateSession(attended, conducted, hours);
+    const hrLabel = hours === 1 ? '1 hr' : `${hours} hrs`;
 
     const fillWidth = Math.min(100, Math.max(0, status.percentage));
     const compLabel = component ? ` • ${component}` : '';
@@ -998,12 +1793,12 @@
       <div class="kl-pop-msg ${status.badgeClass}">${status.message}</div>
       <div class="kl-pop-sim">
         <div class="kl-sim-col">
-          <span class="kl-sim-lbl">If Attended</span>
-          <span class="kl-sim-val">${attended + 1}/${conducted + 1} (${status.attendImpactPercentage}%)</span>
+          <span class="kl-sim-lbl">If Attended (${hrLabel})</span>
+          <span class="kl-sim-val">${sim.ifAttended.a}/${sim.ifAttended.c} (${sim.ifAttended.percent}%)</span>
         </div>
         <div class="kl-sim-col">
-          <span class="kl-sim-lbl">If Missed</span>
-          <span class="kl-sim-val">${attended}/${conducted + 1} (${status.missImpactPercentage}%)</span>
+          <span class="kl-sim-lbl">If Missed (${hrLabel})</span>
+          <span class="kl-sim-val">${sim.ifMissed.a}/${sim.ifMissed.c} (${sim.ifMissed.percent}%)</span>
         </div>
       </div>
     `;
@@ -1034,16 +1829,38 @@
   }
 
   // ── 8. Match & Parse Cell ──────────────────────────────────────────────────
+  function isDayCell(text) {
+    if (!text) return false;
+    const clean = text.trim();
+    return /^(sun(day)?|mon(day)?|tue(s|sday)?|wed(nesday)?|thu(r|rs|rsday)?|fri(day)?|sat(urday)?)$/i.test(clean);
+  }
+
+  function looksLikeCourseCode(text) {
+    if (!text) return false;
+    const clean = text.trim();
+    if (isDayCell(clean)) return false;
+    if (/^(lunch|break|recess|free|hour|period|time|day|sem|semester|year)\b/i.test(clean)) return false;
+    if (/^\d{1,2}[:.]\d{2}/.test(clean)) return false;
+    const candidate = clean.split(/[\s\-–—(]/)[0].toUpperCase();
+    if (candidate.length < 4 || candidate.length > 15) return false;
+    return /[0-9]/.test(candidate) && /[A-Z]/.test(candidate);
+  }
+
   function matchCode(cellText) {
     if (!cellText) return null;
     const upper = cellText.toUpperCase();
     for (const code of allCodes) {
       if (upper.startsWith(code)) {
         const next = upper[code.length];
-        if (next === undefined || next === '-' || next === ' ' || next === '\t' || next === '\n') {
+        if (next === undefined || next === '-' || next === '_' || next === ' ' || next === '\t' || next === '\n' || next === '(') {
           return code;
         }
       }
+    }
+    // Check if cell starts with standard course code pattern
+    const candidateMatch = upper.match(/^([0-9]{2}[A-Z]{2,4}[0-9]{3,4}[A-Z]?)(?:[-_][LTPS])?(?:[\s\-_\/(]|$)/);
+    if (candidateMatch) {
+      return candidateMatch[1];
     }
     return null;
   }
@@ -1093,7 +1910,8 @@
               data-name="${name || ''}"
               data-component="${typeName || ''}"
               data-conducted="${attendance.conducted}"
-              data-attended="${attendance.attended}">
+              data-attended="${attendance.attended}"
+              data-hours="1">
           ${icon} ${bunkStatus.badgeText}
         </span>
       `;
@@ -1116,10 +1934,20 @@
   const processedCells = new Map();
 
   function processCell(td) {
-    if (!td) return false;
+    if (!td || td.tagName === 'TH') return false;
     if (processedCells.has(td)) return false;
 
     const rawText = (td.textContent || '').trim();
+    if (!rawText) return false;
+
+    // Skip day row/column headers
+    if (isDayCell(rawText)) return false;
+    if (td.cellIndex === 0 && (isDayCell(rawText) || /^(mon|tue|wed|thu|fri|sat|sun)/i.test(rawText))) return false;
+
+    // Skip timing and break labels
+    if (/^(lunch|break|recess|hour|period|time)\b/i.test(rawText)) return false;
+    if (/^\d{1,2}[:.]\d{2}/.test(rawText)) return false;
+
     const cleanText = rawText.replace(/[\s\-\u00a0]+/g, '').trim();
 
     // Format empty slots ('-', '--', 'N/A', or blank) with modern 'Free' pill
@@ -1133,11 +1961,29 @@
       return true;
     }
 
-    const codeKey = matchCode(rawText);
-    if (!codeKey || !lookup[codeKey]) return false;
+    const candidateToken = rawText.split(/[\s\-–—(]/)[0];
+    const isCandidateCourse = looksLikeCourseCode(rawText);
+    const codeKey = matchCode(rawText) || (isCandidateCourse ? extractBaseCourseCode(candidateToken) : null);
+    const resolved = codeKey ? resolveCourse(codeKey) : null;
 
-    const { name, originalCode } = lookup[codeKey];
-    const suffix = rawText.slice(originalCode ? originalCode.length : codeKey.length) || '';
+    if (!resolved) {
+      // ONLY collect codes from cells that look like real course cells
+      if (isCandidateCourse) {
+        const candidateBase = extractBaseCourseCode(codeKey || candidateToken);
+        if (candidateBase && candidateBase.length >= 4) {
+          unmatchedCodes.add(candidateBase);
+          unmatchedCourseCodesNotCoveredByBundle.add(candidateBase);
+        }
+      }
+      return false;
+    }
+
+    const { name, originalCode, source } = resolved;
+    if (source !== 'my_courses') {
+      hasMissingInMyCourses = true;
+    }
+
+    const suffix = rawText.slice(originalCode ? originalCode.length : (codeKey ? codeKey.length : 0)) || '';
     const parsedData = parseCellData(originalCode, name, suffix);
 
     processedCells.set(td, {
@@ -1147,6 +1993,7 @@
     });
 
     td.innerHTML = renderHTML(parsedData, state.mode);
+    td.setAttribute('data-hours', '1');
 
     // Bind hover & click events on attendance badges
     const attBadges = td.querySelectorAll('.kl-attendance-badge');
@@ -1248,6 +2095,22 @@
           }
         }
       }
+
+      // Make session hours available on cells and badges at render time
+      for (const row of rows) {
+        const cells = Array.from(row.children).filter(el => el.tagName === 'TD');
+        for (const td of cells) {
+          if (td.style.display === 'none' || td.getAttribute('data-merged-into') === 'true') {
+            continue;
+          }
+          const hours = getSessionHours(td);
+          td.setAttribute('data-hours', String(hours));
+          const badge = td.querySelector('.kl-attendance-badge');
+          if (badge) {
+            badge.setAttribute('data-hours', String(hours));
+          }
+        }
+      }
     }
   }
 
@@ -1345,17 +2208,26 @@
       const orig = parseInt(td.getAttribute('data-orig-colspan'), 10) || 1;
       td.colSpan = orig;
       td.removeAttribute('data-orig-colspan');
+      td.setAttribute('data-hours', '1');
+      const badge = td.querySelector('.kl-attendance-badge');
+      if (badge) badge.setAttribute('data-hours', '1');
     }
   }
 
+  let hasMissingInMyCourses = false;
+  let unmatchedCodes = new Set();
+
   function processTables() {
-    if (!state.enabled || isProcessing) return 0;
+    if (!state.enabled || isProcessing || !isTimetablePage()) return 0;
     if (!document.querySelector('table')) return 0;
 
     injectStyles();
     expandTimetableContainers();
     isProcessing = true;
     let n = 0;
+    hasMissingInMyCourses = false;
+    unmatchedCodes = new Set();
+    unmatchedCourseCodesNotCoveredByBundle = new Set();
     try {
       untrimColumns();
       unmergeAdjacentTableCells();
@@ -1365,11 +2237,25 @@
       }
       trimTrailingEmptyColumns();
       mergeAdjacentTableCells();
+
+      checkAndShowFallbackBanner();
+      updateLiveWidgetAndGrid();
     } finally {
       isProcessing = false;
     }
 
-    updateLiveWidgetAndGrid();
+    if (unmatchedCodes.size > 0) {
+      const sortedStr = Array.from(unmatchedCodes).sort().join(', ');
+      if (sortedStr !== lastPrintedUnmatched) {
+        lastPrintedUnmatched = sortedStr;
+        console.log(`[KL Replacer] unmatched codes: ${sortedStr}`);
+      }
+    }
+
+    if (hasMissingInMyCourses) {
+      checkAndTriggerCourseFetch({ hasMissingCode: true });
+    }
+
     return n;
   }
 
@@ -1391,12 +2277,14 @@
       if (widget) widget.remove();
       const pop = document.getElementById('kl-bunk-popover');
       if (pop) pop.remove();
+      removeFallbackBanner();
     } finally {
       isProcessing = false;
     }
   }
 
   function reapplyAll() {
+    if (!isTimetablePage()) return;
     isProcessing = true;
     try {
       untrimColumns();
@@ -1407,26 +2295,39 @@
         if (td && d) {
           if (d.isEmptySlot) {
             td.innerHTML = '<div class="kl-empty-slot"><span class="kl-empty-pill">Free</span></div>';
-          } else if (d.parsedData) {
-            td.innerHTML = renderHTML(d.parsedData, state.mode);
-            const attBadges = td.querySelectorAll('.kl-attendance-badge');
-            attBadges.forEach(badge => {
-              badge.addEventListener('mouseenter', () => showBunkPopover(badge));
-              badge.addEventListener('mouseleave', hideBunkPopover);
-              badge.addEventListener('click', (e) => {
-                e.stopPropagation();
-                showBunkPopover(badge);
+          } else {
+            // Re-resolve using updated myCourses so new names appear after fetch
+            const rawText = d.originalText || '';
+            const codeKey = matchCode(rawText) || (looksLikeCourseCode(rawText) ? extractBaseCourseCode(rawText.split(/[\s\-–—(]/)[0]) : null);
+            const resolved = codeKey ? resolveCourse(codeKey) : null;
+            if (resolved) {
+              const sfx = rawText.slice(resolved.originalCode ? resolved.originalCode.length : (codeKey ? codeKey.length : 0)) || '';
+              d.parsedData = parseCellData(resolved.originalCode, resolved.name, sfx);
+            }
+            if (d.parsedData) {
+              td.innerHTML = renderHTML(d.parsedData, state.mode);
+              td.setAttribute('data-hours', '1');
+              const attBadges = td.querySelectorAll('.kl-attendance-badge');
+              attBadges.forEach(badge => {
+                badge.addEventListener('mouseenter', () => showBunkPopover(badge));
+                badge.addEventListener('mouseleave', hideBunkPopover);
+                badge.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  showBunkPopover(badge);
+                });
               });
-            });
+            }
           }
         }
       }
       trimTrailingEmptyColumns();
       mergeAdjacentTableCells();
+
+      checkAndShowFallbackBanner();
+      updateLiveWidgetAndGrid();
     } finally {
       isProcessing = false;
     }
-    updateLiveWidgetAndGrid();
   }
 
   // ── 10. Schedule Grid Detection & Consecutive Hour Merging ─────────────────
@@ -1865,18 +2766,31 @@
 
   // ── 13. Debounced MutationObserver ─────────────────────────────────────────
   let debounceTimer = null;
-  const observer = new MutationObserver(() => {
-    if (isProcessing) return;
+  const observer = new MutationObserver((mutations) => {
+    if (isProcessing || !isTimetablePage()) return;
+
+    // Ignore mutations originating entirely from extension UI widgets
+    const isExtensionOnly = mutations.every(m => {
+      const target = m.target;
+      if (!target) return false;
+      if (target.id === 'kl-live-widget' || target.id === 'kl-fallback-banner' || target.id === 'kl-bunk-popover') return true;
+      if (target.closest && (target.closest('#kl-live-widget') || target.closest('#kl-fallback-banner') || target.closest('#kl-bunk-popover'))) return true;
+      if (typeof target.className === 'string' && target.className.includes('kl-')) return true;
+      return false;
+    });
+    if (isExtensionOnly) return;
+
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      if (state.enabled) {
+      if (state.enabled && isTimetablePage()) {
         processTables();
       }
-    }, 200);
+    }, 300);
   });
 
   function startObserver() {
     stopObserver();
+    if (!isTimetablePage()) return;
     const target = document.body || document.documentElement;
     if (target && observer) {
       try {
@@ -1913,39 +2827,66 @@
       state.attendanceData = changes.kl_attendance_data.newValue;
     }
 
+    // When myCourses data arrives (from fetchMyCourses or passive capture),
+    // rebuild lookups and re-render all already-processed cells.
+    if (changes && changes.kl_my_courses && changes.kl_my_courses.newValue !== undefined) {
+      myCourses = changes.kl_my_courses.newValue || {};
+      rebuildLookups();
+      logOnce('[KL Replacer] kl_my_courses updated — re-rendering timetable cells.');
+    }
+
+    // When user dismisses the fallback banner, remove it immediately.
+    if (changes && changes.kl_course_banner_dismissed_at) {
+      bannerDismissedAt = Number(changes.kl_course_banner_dismissed_at.newValue) || 0;
+      removeFallbackBanner();
+    }
+
+    // GATING: Timetable DOM mutations, rendering and observers ONLY execute on timetable pages!
+    if (!isTimetablePage()) return;
+
     if (!state.enabled) {
       restoreAll();
+      stopObserver();
     } else {
       reapplyAll();
       processTables();
+      startObserver();
     }
-
-    startObserver();
   });
 
   // ── 15. Bootstrap ──────────────────────────────────────────────────────────
   function init() {
-    // 1. Fetch live attendance data asynchronously in background
-    fetchLiveAttendanceData();
+    if (isTimetablePage()) {
+      // 1. Fetch live attendance data asynchronously (only on timetable, only if params found)
+      fetchLiveAttendanceData();
 
-    // 2. Format tables
-    let attempts = 0;
-    function tryReplace() {
-      if (state.enabled) {
+      // 2. Format timetable with early termination once processed
+      let attempts = 0;
+      function tryReplace() {
+        if (!state.enabled || !isTimetablePage()) return;
         const n = processTables();
         if (n > 0) {
-          console.log(`[KL Replacer] ✓ ${n} cell(s) formatted (attempt ${attempts + 1})`);
+          logOnce(`[KL Replacer] ✓ ${n} timetable cell(s) formatted`);
+          return; // Stop retry loop immediately once successful!
+        }
+        attempts++;
+        if (attempts < 10) {
+          setTimeout(tryReplace, 500);
         }
       }
-      attempts++;
-      if (attempts < 20) {
-        setTimeout(tryReplace, 500);
+
+      tryReplace();
+      startObserver();
+      startLiveScheduleTimer();
+    } else if (isProfilePage()) {
+      // Profile page: activate passive capture observer
+      if (typeof initProfilePassiveCapture === 'function') {
+        initProfilePassiveCapture();
       }
     }
 
-    tryReplace();
-    startObserver();
-    startLiveScheduleTimer();
+    // Background course auto-fetch runs as needed on any ERP page (respecting cache age & triggers)
+    checkAndTriggerCourseFetch();
   }
 
   if (document.readyState === 'loading') {

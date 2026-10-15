@@ -18,9 +18,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://newerp.kluniversity.in/index.php?r=timetables%2Funiversitymasteracademictimetableview%2Findividualstudenttimetableget*",
-        "https://newerp.kluniversity.in/index.php?r=timetables/universitymasteracademictimetableview/individualstudenttimetableget*",
-        "https://newerp.kluniversity.in/index.php?r=*individualstudenttimetableget*"
+        "https://newerp.kluniversity.in/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
