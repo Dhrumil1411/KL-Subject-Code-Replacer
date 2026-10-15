@@ -4,3 +4,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+# Secrets and environment
+.env
+.env.*
+!.env.example
